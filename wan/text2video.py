@@ -69,8 +69,8 @@ class WanT2V:
         self.text_encoder = T5EncoderModel(
             text_len=config.text_len,
             dtype=config.t5_dtype,
-            # device=torch.device('cpu'),
-            device=self.device,
+            device=torch.device('cpu'),
+            # device=self.device,
             checkpoint_path=os.path.join(checkpoint_dir, config.t5_checkpoint),
             tokenizer_path=os.path.join(checkpoint_dir, config.t5_tokenizer),
             shard_fn=shard_fn if t5_fsdp else None)
@@ -105,7 +105,7 @@ class WanT2V:
             self.model = shard_fn(self.model)
         else:
             print("Initiallly load model to CPU to prevent OOM error")
-            self.model.cpu()
+            self.model.to(self.device)
 
         self.sample_neg_prompt = config.sample_neg_prompt
 

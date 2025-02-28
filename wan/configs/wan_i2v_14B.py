@@ -33,3 +33,6 @@ i2v_14B.window_size = (-1, -1)
 i2v_14B.qk_norm = True
 i2v_14B.cross_attn_norm = True
 i2v_14B.eps = 1e-6
+
+
+diffusion_pytorch_model.safetensors

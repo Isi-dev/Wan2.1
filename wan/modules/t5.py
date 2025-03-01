@@ -2,6 +2,7 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import logging
 import math
+from safetensors.torch import load_file
 
 import torch
 import torch.nn as nn
@@ -493,7 +494,9 @@ class T5EncoderModel:
             dtype=dtype,
             device=device).eval().requires_grad_(False)
         logging.info(f'loading {checkpoint_path}')
-        model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+        # model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+        
+        model.load_state_dict(load_file(checkpoint_path, device="cpu"))
         self.model = model
         if shard_fn is not None:
             self.model = shard_fn(self.model, sync_module_states=False)

@@ -13,7 +13,7 @@ t2v_1_3B.t5_checkpoint = 'models_t5_umt5-xxl-enc-bf16.safetensors'
 t2v_1_3B.t5_tokenizer = 'google/umt5-xxl'
 
 # vae
-t2v_1_3B.vae_checkpoint = 'Wan2.1_VAE.safetensors'
+t2v_1_3B.vae_checkpoint = 'Wan2.1_VAE.pth'
 t2v_1_3B.vae_stride = (4, 8, 8)
 
 # transformer

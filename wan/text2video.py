@@ -81,8 +81,8 @@ class WanT2V:
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
             device=self.device)
 
-        logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained(checkpoint_dir)
+        logging.info(f"Creating WanModel from {checkpoint_dir/split_files/diffusion_models}")
+        self.model = WanModel.from_pretrained(checkpoint_dir/split_files/diffusion_models)
         self.model.eval().requires_grad_(False)
 
         if use_usp:

@@ -24,6 +24,122 @@ from .utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
 
 
 class WanT2V:
+    def __init__(self, config, checkpoint_dir, device_id=0, rank=0, t5_fsdp=False, dit_fsdp=False, use_usp=False, t5_cpu=False):
+        self.device = torch.device(f"cuda:{device_id}")
+        self.config = config
+        self.rank = rank
+        self.t5_cpu = t5_cpu
+
+        self.num_train_timesteps = config.num_train_timesteps
+        self.param_dtype = config.param_dtype
+
+        shard_fn = partial(shard_model, device_id=device_id)
+        
+        self.text_encoder = T5EncoderModel(
+            text_len=config.text_len,
+            dtype=config.t5_dtype,
+            device=torch.device('cpu'),
+            checkpoint_path=os.path.join(checkpoint_dir, config.t5_checkpoint),
+            tokenizer_path=os.path.join(checkpoint_dir, config.t5_tokenizer),
+            shard_fn=shard_fn if t5_fsdp else None)
+        
+        self.vae_stride = config.vae_stride
+        self.patch_size = config.patch_size
+        self.vae = WanVAE(
+            vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
+            device=self.device)
+        
+        logging.info(f"Creating WanModel from {checkpoint_dir}")
+        self.model = WanModel.from_pretrained(checkpoint_dir)
+        self.model.eval().requires_grad_(False)
+        
+        self.sample_neg_prompt = config.sample_neg_prompt
+
+    def generate(self, input_prompt, size=(1280, 720), frame_num=81, shift=5.0, sample_solver='unipc', sampling_steps=50, guide_scale=5.0, n_prompt="", seed=-1, offload_model=True):
+        F = frame_num
+        target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1, size[1] // self.vae_stride[1], size[0] // self.vae_stride[2])
+        
+        seq_len = math.ceil((target_shape[2] * target_shape[3]) / (self.patch_size[1] * self.patch_size[2]) * target_shape[1])
+        
+        if n_prompt == "":
+            n_prompt = self.sample_neg_prompt
+        seed = seed if seed >= 0 else random.randint(0, sys.maxsize)
+        seed_g = torch.Generator(device=self.device)
+        seed_g.manual_seed(seed)
+        
+        if not self.t5_cpu:
+            self.text_encoder.model.to(self.device)
+            context = self.text_encoder([input_prompt], self.device)
+            context_null = self.text_encoder([n_prompt], self.device)
+            del self.text_encoder  # Delete text encoder after use
+        else:
+            context = self.text_encoder([input_prompt], torch.device('cpu'))
+            context_null = self.text_encoder([n_prompt], torch.device('cpu'))
+            context = [t.to(self.device) for t in context]
+            context_null = [t.to(self.device) for t in context_null]
+            del self.text_encoder  # Delete text encoder after use
+        
+        noise = torch.zeros(target_shape, dtype=torch.float32, device=self.device)
+        
+        self.vae.model.to("cpu")  # Move VAE to CPU after encoding
+        
+        if sample_solver == 'unipc':
+            sample_scheduler = FlowUniPCMultistepScheduler(num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False)
+            sample_scheduler.set_timesteps(sampling_steps, device=self.device, shift=shift)
+            timesteps = sample_scheduler.timesteps
+        elif sample_solver == 'dpm++':
+            sample_scheduler = FlowDPMSolverMultistepScheduler(num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False)
+            sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
+            timesteps, _ = retrieve_timesteps(sample_scheduler, device=self.device, sigmas=sampling_sigmas)
+        else:
+            raise NotImplementedError("Unsupported solver.")
+        
+        latents = noise
+        arg_c = {'context': context, 'seq_len': seq_len}
+        arg_null = {'context': context_null, 'seq_len': seq_len}
+
+        memory_limit = 35 * 1024 ** 3  # 35GB in bytes
+        
+        for _, t in enumerate(tqdm(timesteps)):
+            latent_model_input = latents
+            timestep = torch.tensor([t], device=self.device)
+
+            for block in self.model.blocks:
+                block.to(self.device)  # Load block to GPU
+                
+                with torch.no_grad():
+                    noise_pred_cond = block(latent_model_input, t=timestep, **arg_c)[0]
+                    noise_pred_uncond = block(latent_model_input, t=timestep, **arg_null)[0]
+                    
+                    noise_pred = noise_pred_uncond + guide_scale * (noise_pred_cond - noise_pred_uncond)
+                    latents = sample_scheduler.step(noise_pred.unsqueeze(0), t, latents.unsqueeze(0), return_dict=False, generator=seed_g)[0].squeeze(0)
+                
+                if torch.cuda.memory_allocated() > memory_limit:
+                    block.cpu()  # Offload block only when needed
+                    torch.cuda.empty_cache()
+        
+        x0 = latents
+        
+        del self.model  # Delete model after processing
+        
+        self.vae.model.to(self.device)  # Move VAE back to GPU for decoding
+        
+        if self.rank == 0:
+            videos = self.vae.decode(x0)
+        
+        del noise, latents
+        del sample_scheduler
+        
+        if offload_model:
+            gc.collect()
+            torch.cuda.synchronize()
+        if dist.is_initialized():
+            dist.barrier()
+        
+        return videos[0] if self.rank == 0 else None
+
+
+class WanT2Vprev:
 
     def __init__(
         self,

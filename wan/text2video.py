@@ -38,8 +38,8 @@ class WanT2V:
         self.text_encoder = T5EncoderModel(
             text_len=config.text_len,
             dtype=config.t5_dtype,
-            # device=torch.device('cpu'),
-            device=self.device,
+            device=torch.device('cpu'),
+            # device=self.device,
             checkpoint_path=os.path.join(checkpoint_dir, config.t5_checkpoint),
             tokenizer_path=os.path.join(checkpoint_dir, config.t5_tokenizer),
             shard_fn=shard_fn if t5_fsdp else None)
@@ -50,12 +50,7 @@ class WanT2V:
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
             device=self.device)
         
-        logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained(checkpoint_dir)
-        logging.info(f"WanModel creaed from {checkpoint_dir}")
-        self.model.eval().requires_grad_(False)
-        logging.info("Time to generate!")
-        self.sample_neg_prompt = config.sample_neg_prompt
+        
 
     def generate(self, input_prompt, size=(1280, 720), frame_num=81, shift=5.0, sample_solver='unipc', sampling_steps=50, guide_scale=5.0, n_prompt="", seed=-1, offload_model=True):
         print("Generation Stage!")
@@ -71,7 +66,7 @@ class WanT2V:
         seed_g.manual_seed(seed)
         
         if not self.t5_cpu:
-            # self.text_encoder.model.to(self.device)
+            self.text_encoder.model.to(self.device)
             print("Processing text in GPU!")
             context = self.text_encoder([input_prompt], self.device)
             context_null = self.text_encoder([n_prompt], self.device)
@@ -85,11 +80,18 @@ class WanT2V:
             context_null = [t.to(self.device) for t in context_null]
             print("Deleting text encoder...")
             del self.text_encoder  # Delete text encoder after use
+
+        logging.info(f"Creating WanModel from {checkpoint_dir}")
+        self.model = WanModel.from_pretrained(checkpoint_dir)
+        logging.info(f"WanModel creaed from {checkpoint_dir}")
+        self.model.eval().requires_grad_(False)
+        logging.info("Time to generate!")
+        self.sample_neg_prompt = config.sample_neg_prompt
         
         noise = torch.zeros(target_shape, dtype=torch.float32, device=self.device)
 
-        print("Moving VAE to CPU...")
-        self.vae.model.to("cpu")  # Move VAE to CPU after encoding
+        # print("Moving VAE to CPU...")
+        # self.vae.model.to("cpu")  # Move VAE to CPU after encoding
         
         if sample_solver == 'unipc':
             sample_scheduler = FlowUniPCMultistepScheduler(num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False)

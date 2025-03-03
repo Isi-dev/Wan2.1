@@ -82,7 +82,8 @@ class WanT2V:
             device=self.device)
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained(checkpoint_dir, low_cpu_mem_usage=False, ignore_mismatched_sizes=True)
+        # self.model = WanModel.from_pretrained(checkpoint_dir, low_cpu_mem_usage=False, ignore_mismatched_sizes=True)
+        self.model = WanModel.from_pretrained(checkpoint_dir)
         self.model.eval().requires_grad_(False)
 
         if use_usp:

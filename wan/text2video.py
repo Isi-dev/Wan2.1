@@ -171,12 +171,12 @@ class WanT2V:
         seed_g.manual_seed(seed)
 
         if not self.t5_cpu:
-            # self.text_encoder.model.to(self.device)
+            self.text_encoder.model.to(self.device)
             print("text_encoder in GPU")
             context = self.text_encoder([input_prompt], self.device)
             context_null = self.text_encoder([n_prompt], self.device)
             if offload_model:
-                # self.text_encoder.model.cpu()
+                self.text_encoder.model.cpu()
                 print("deleting text_encoder")
                 del self.text_encoder
                 torch.cuda.empty_cache()

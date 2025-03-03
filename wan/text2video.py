@@ -29,10 +29,10 @@ class WanT2V:
         self.config = config
         self.rank = rank
         self.t5_cpu = t5_cpu
-
+    
         self.num_train_timesteps = config.num_train_timesteps
         self.param_dtype = config.param_dtype
-
+        self.checkpoint_dir = checkpoint_dir
         shard_fn = partial(shard_model, device_id=device_id)
         
         self.text_encoder = T5EncoderModel(
@@ -81,9 +81,9 @@ class WanT2V:
             print("Deleting text encoder...")
             del self.text_encoder  # Delete text encoder after use
 
-        logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained(checkpoint_dir)
-        logging.info(f"WanModel creaed from {checkpoint_dir}")
+        logging.info(f"Creating WanModel from {self.checkpoint_dir}")
+        self.model = WanModel.from_pretrained(self.checkpoint_dir)
+        logging.info(f"WanModel created from {self.checkpoint_dir}")
         self.model.eval().requires_grad_(False)
         logging.info("Time to generate!")
         

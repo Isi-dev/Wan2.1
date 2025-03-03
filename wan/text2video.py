@@ -51,11 +51,13 @@ class WanT2V:
         
         logging.info(f"Creating WanModel from {checkpoint_dir}")
         self.model = WanModel.from_pretrained(checkpoint_dir)
+        logging.info(f"WanModel creaed from {checkpoint_dir}")
         self.model.eval().requires_grad_(False)
-        
+        logging.info("Time to generate!")
         self.sample_neg_prompt = config.sample_neg_prompt
 
     def generate(self, input_prompt, size=(1280, 720), frame_num=81, shift=5.0, sample_solver='unipc', sampling_steps=50, guide_scale=5.0, n_prompt="", seed=-1, offload_model=True):
+        print("Generation Stage!")
         F = frame_num
         target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1, size[1] // self.vae_stride[1], size[0] // self.vae_stride[2])
         

@@ -71,16 +71,19 @@ class WanT2V:
             self.text_encoder.model.to(self.device)
             context = self.text_encoder([input_prompt], self.device)
             context_null = self.text_encoder([n_prompt], self.device)
+            print("Deleting text encoder...")
             del self.text_encoder  # Delete text encoder after use
         else:
             context = self.text_encoder([input_prompt], torch.device('cpu'))
             context_null = self.text_encoder([n_prompt], torch.device('cpu'))
             context = [t.to(self.device) for t in context]
             context_null = [t.to(self.device) for t in context_null]
+            print("Deleting text encoder...")
             del self.text_encoder  # Delete text encoder after use
         
         noise = torch.zeros(target_shape, dtype=torch.float32, device=self.device)
-        
+
+        print("Moving VAE to CPU...")
         self.vae.model.to("cpu")  # Move VAE to CPU after encoding
         
         if sample_solver == 'unipc':
@@ -98,7 +101,8 @@ class WanT2V:
         arg_c = {'context': context, 'seq_len': seq_len}
         arg_null = {'context': context_null, 'seq_len': seq_len}
 
-        memory_limit = 35 * 1024 ** 3  # 35GB in bytes
+        print("Setting memory limit to 20GB...")
+        memory_limit = 20 * 1024 ** 3  # 20GB in bytes
         
         for _, t in enumerate(tqdm(timesteps)):
             latent_model_input = latents

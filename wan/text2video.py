@@ -53,7 +53,7 @@ class WanT2V:
         
 
     def generate(self, input_prompt, size=(1280, 720), frame_num=81, shift=5.0, sample_solver='unipc', sampling_steps=50, guide_scale=5.0, n_prompt="", seed=-1, offload_model=True):
-        print("Generation Stage!")
+        print("Generation Stage! Model not yet loaded. But let's first use and get rid of the text encoder.")
         F = frame_num
         target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1, size[1] // self.vae_stride[1], size[0] // self.vae_stride[2])
         

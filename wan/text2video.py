@@ -50,7 +50,7 @@ class WanT2V:
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
             device=self.device)
         
-        
+        self.sample_neg_prompt = config.sample_neg_prompt
 
     def generate(self, input_prompt, size=(1280, 720), frame_num=81, shift=5.0, sample_solver='unipc', sampling_steps=50, guide_scale=5.0, n_prompt="", seed=-1, offload_model=True):
         print("Generation Stage! Model not yet loaded. But let's first use and get rid of the text encoder.")
@@ -86,7 +86,7 @@ class WanT2V:
         logging.info(f"WanModel creaed from {checkpoint_dir}")
         self.model.eval().requires_grad_(False)
         logging.info("Time to generate!")
-        self.sample_neg_prompt = config.sample_neg_prompt
+        
         
         noise = torch.zeros(target_shape, dtype=torch.float32, device=self.device)
 

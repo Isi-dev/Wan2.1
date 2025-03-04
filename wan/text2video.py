@@ -82,7 +82,7 @@ class WanT2V:
             del self.text_encoder  # Delete text encoder after use
 
         logging.info(f"Creating WanModel from {self.checkpoint_dir}")
-        self.model = WanModel.from_pretrained(self.checkpoint_dir)
+        self.model = WanModel.from_pretrained_lazy(self.checkpoint_dir, self.device)
         logging.info(f"WanModel created from {self.checkpoint_dir}")
         self.model.eval().requires_grad_(False)
         logging.info("Time to generate!")
@@ -90,8 +90,8 @@ class WanT2V:
         
         noise = torch.zeros(target_shape, dtype=torch.float32, device=self.device)
 
-        # print("Moving VAE to CPU...")
-        # self.vae.model.to("cpu")  # Move VAE to CPU after encoding
+        print("Moving VAE to CPU...")
+        self.vae.model.to("cpu")  # Move VAE to CPU after encoding
         
         if sample_solver == 'unipc':
             sample_scheduler = FlowUniPCMultistepScheduler(num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False)
@@ -108,33 +108,82 @@ class WanT2V:
         arg_c = {'context': context, 'seq_len': seq_len}
         arg_null = {'context': context_null, 'seq_len': seq_len}
 
-        print("Setting memory limit to 20GB...")
-        memory_limit = 20 * 1024 ** 3  # 20GB in bytes
-        
+        print("Setting VRAM limit to 15GB...")
+        memory_limit = 15 * 1024 ** 3  # 15GB in bytes
+
+        # Calculate the number of blocks to load at a time
+        # block_size = self.model.blocks[0].parameters().__sizeof__()  # Approximate size of one block
+        # max_blocks_per_chunk = memory_limit // block_size
+        # num_blocks = len(self.model.blocks)
+        # chunks = [range(i, min(i + max_blocks_per_chunk, num_blocks)) for i in range(0, num_blocks, max_blocks_per_chunk)]
+
+        block_size = sum(p.element_size() * p.numel() for p in self.model.blocks[0].parameters())
+        print(f"The size of the first block is {block_size}.")
+        max_blocks_per_chunk = max(1, memory_limit // block_size)
+        num_blocks = len(self.model.blocks)
+        print(f"The model has {num_blocks} blocks.")
+        chunks = [range(i, min(i + max_blocks_per_chunk, num_blocks)) for i in range(0, num_blocks, max_blocks_per_chunk)]
+        print(f"There are {len(chunks)} chunks of the model to process.")
+
         for _, t in enumerate(tqdm(timesteps)):
-                latent_model_input = latents
-                timestep = [t]
-
-                timestep = torch.stack(timestep)
-
-                self.model.to(self.device)
-                noise_pred_cond = self.model(
-                    latent_model_input, t=timestep, **arg_c)[0]
-                noise_pred_uncond = self.model(
-                    latent_model_input, t=timestep, **arg_null)[0]
-
-                noise_pred = noise_pred_uncond + guide_scale * (
-                    noise_pred_cond - noise_pred_uncond)
-
-                temp_x0 = sample_scheduler.step(
-                    noise_pred.unsqueeze(0),
-                    t,
-                    latents[0].unsqueeze(0),
-                    return_dict=False,
-                    generator=seed_g)[0]
-                latents = [temp_x0.squeeze(0)]
-
+              latent_model_input = latents
+              timestep = [t]
+      
+              timestep = torch.stack(timestep)
+      
+              # Initialize noise_pred_cond and noise_pred_uncond
+              noise_pred_cond = torch.zeros_like(latent_model_input)
+              noise_pred_uncond = torch.zeros_like(latent_model_input)
+      
+              # Process each chunk of blocks
+              for chunk_indices in chunks:
+                  # Compute noise_pred_cond and noise_pred_uncond incrementally
+                  chunk_noise_pred_cond, chunk_noise_pred_uncond = self.model.process_incremental(
+                      latent_model_input, chunk_indices, t=timestep, **arg_c)
+      
+                  # Accumulate the results
+                  noise_pred_cond += chunk_noise_pred_cond
+                  noise_pred_uncond += chunk_noise_pred_uncond
+      
+              # Compute the final noise_pred
+              noise_pred = noise_pred_uncond + guide_scale * (
+                  noise_pred_cond - noise_pred_uncond)
+      
+              # Compute temp_x0
+              temp_x0 = sample_scheduler.step(
+                  noise_pred.unsqueeze(0),
+                  t,
+                  latents[0].unsqueeze(0),
+                  return_dict=False,
+                  generator=seed_g)[0]
+              latents = [temp_x0.squeeze(0)]
+      
         x0 = latents
+        
+        # for _, t in enumerate(tqdm(timesteps)):
+        #         latent_model_input = latents
+        #         timestep = [t]
+
+        #         timestep = torch.stack(timestep)
+
+        #         self.model.to(self.device)
+        #         noise_pred_cond = self.model(
+        #             latent_model_input, t=timestep, **arg_c)[0]
+        #         noise_pred_uncond = self.model(
+        #             latent_model_input, t=timestep, **arg_null)[0]
+
+        #         noise_pred = noise_pred_uncond + guide_scale * (
+        #             noise_pred_cond - noise_pred_uncond)
+
+        #         temp_x0 = sample_scheduler.step(
+        #             noise_pred.unsqueeze(0),
+        #             t,
+        #             latents[0].unsqueeze(0),
+        #             return_dict=False,
+        #             generator=seed_g)[0]
+        #         latents = [temp_x0.squeeze(0)]
+
+        # x0 = latents
         
         del self.model  # Delete model after processing
         

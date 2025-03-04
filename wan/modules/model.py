@@ -504,8 +504,8 @@ class WanModel(ModelMixin, ConfigMixin):
 
         # Load the state dict keys to identify blocks
         state_dict_path = os.path.join(checkpoint_dir, "diffusion_pytorch_model.safetensors")
-        state_dict = torch.load(state_dict_path, map_location="cpu")
-        block_keys = [key for key in state_dict.keys() if "blocks." in key]
+        with safe_open(state_dict_path, framework="pt") as f:
+            block_keys = [key for key in f.keys() if "blocks." in key]
 
         # Store the checkpoint directory and device for lazy loading
         model.checkpoint_dir = checkpoint_dir
@@ -529,10 +529,10 @@ class WanModel(ModelMixin, ConfigMixin):
         block_state_dict = {}
 
         # Load only the required block's state dict from disk
-        with open(self.state_dict_path, "rb") as f:
+        with safe_open(self.state_dict_path, framework="pt") as f:
             for key in self.block_keys:
                 if key.startswith(block_key_prefix):
-                    block_state_dict[key[len(block_key_prefix):]] = torch.load(f, map_location="cpu")[key]
+                    block_state_dict[key[len(block_key_prefix):]] = f.get_tensor(key)
 
         # Load the block and move it to the GPU
         block = self.blocks[block_idx]
@@ -579,7 +579,7 @@ class WanModel(ModelMixin, ConfigMixin):
             # Unload the block from GPU
             self.unload_block_from_gpu(idx)
 
-        return noise_pred_cond, noise_pred_uncond
+        return noise_pred_cond, noise_pred_uncond   
 
     # ... End of Memory Optimization Functions
 

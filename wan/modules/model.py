@@ -385,7 +385,8 @@ class WanModel(ModelMixin, ConfigMixin):
                  window_size=(-1, -1),
                  qk_norm=True,
                  cross_attn_norm=True,
-                 eps=1e-6):
+                 eps=1e-6,
+                 lazy_init=False):
         r"""
         Initialize the diffusion model backbone.
 
@@ -455,11 +456,17 @@ class WanModel(ModelMixin, ConfigMixin):
 
         # blocks
         cross_attn_type = 't2v_cross_attn' if model_type == 't2v' else 'i2v_cross_attn'
-        self.blocks = nn.ModuleList([
-            WanAttentionBlock(cross_attn_type, dim, ffn_dim, num_heads,
-                              window_size, qk_norm, cross_attn_norm, eps)
-            for _ in range(num_layers)
-        ])
+
+        # Initialize model parameters only if lazy_init is False XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+        if not lazy_init:
+            self.blocks = nn.ModuleList([
+                WanAttentionBlock(cross_attn_type, dim, ffn_dim, num_heads,
+                                  window_size, qk_norm, cross_attn_norm, eps)
+                for _ in range(num_layers)
+            ])
+        else:
+            # Initialize blocks as None for lazy loading XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+            self.blocks = nn.ModuleList([None for _ in range(config.num_layers)])
 
         # head
         self.head = Head(dim, out_dim, patch_size, eps)
@@ -498,61 +505,84 @@ class WanModel(ModelMixin, ConfigMixin):
             WanModel: A partially loaded model ready for incremental processing.
         """
         # Load the model configuration
-        config = cls.load_config(checkpoint_dir)
-        model = cls(**config)
-        model.to("cpu")  # Ensure the model is initially on CPU
-        model.eval().requires_grad_(False)
+    config = cls.load_config(checkpoint_dir)
 
-        # Load the state dict keys to identify blocks
-        state_dict_path = os.path.join(checkpoint_dir, "diffusion_pytorch_model.safetensors")
-        with safe_open(state_dict_path, framework="pt") as f:
-            block_keys = [key for key in f.keys() if "blocks." in key]
+    # Initialize the model structure without allocating parameters
+    model = cls(**config, lazy_init=True)  # Pass a flag to avoid parameter allocation
+    model.to("cpu")  # Ensure the model is initially on CPU
+    model.eval().requires_grad_(False)
 
-        # Store the checkpoint directory and device for lazy loading
-        model.checkpoint_dir = checkpoint_dir
-        model.device = device
-        model.block_keys = block_keys
-        model.state_dict_path = state_dict_path
+    # Load the state dict keys to identify blocks
+    state_dict_path = os.path.join(checkpoint_dir, "diffusion_pytorch_model.safetensors")
+    with safe_open(state_dict_path, framework="pt") as f:
+        block_keys = [key for key in f.keys() if "blocks." in key]
 
-        return model
+    # Store the checkpoint directory and device for lazy loading
+    model.checkpoint_dir = checkpoint_dir
+    model.device = device
+    model.block_keys = block_keys
+    model.state_dict_path = state_dict_path
+
+    # Initialize blocks as None (lazy loading)
+    for i in range(len(model.blocks)):
+        model.blocks[i] = None
+
+    return model
 
     def load_block_from_disk(self, block_idx):
         """
         Load a specific block directly from disk to the GPU.
-
+    
         Args:
             block_idx (int): Index of the block to load.
-
+    
         Returns:
             Module: The loaded block.
         """
+        # If the block is already loaded, return it
+        if self.blocks[block_idx] is not None:
+            return self.blocks[block_idx]
+    
+        # Load the block's state dict from disk
         block_key_prefix = f"blocks.{block_idx}."
         block_state_dict = {}
-
-        # Load only the required block's state dict from disk
+    
         with safe_open(self.state_dict_path, framework="pt") as f:
             for key in self.block_keys:
                 if key.startswith(block_key_prefix):
                     block_state_dict[key[len(block_key_prefix):]] = f.get_tensor(key)
-
-        # Load the block and move it to the GPU
-        block = self.blocks[block_idx]
+    
+        # Initialize the block and load its state dict
+        block = WanAttentionBlock(
+            dim=self.dim,
+            ffn_dim=self.ffn_dim,
+            num_heads=self.num_heads,
+            window_size=self.window_size,
+            qk_norm=self.qk_norm,
+            cross_attn_norm=self.cross_attn_norm,
+            eps=self.eps
+        )
         block.load_state_dict(block_state_dict)
         block.to(self.device)
+    
+        # Store the loaded block
+        self.blocks[block_idx] = block
+    
         return block
 
     def unload_block_from_gpu(self, block_idx):
         """
         Unload a specific block from GPU memory and delete it from CPU memory.
-
+    
         Args:
             block_idx (int): Index of the block to unload.
         """
         block = self.blocks[block_idx]
-        block.to("cpu")  # Move the block to CPU
-        del block  # Delete the block from CPU memory
-        torch.cuda.empty_cache()  # Clear GPU cache
-        self.blocks[block_idx] = None  # Set the block to None to free up the reference
+        if block is not None:
+            block.to("cpu")  # Move the block to CPU
+            del block  # Delete the block from CPU memory
+            torch.cuda.empty_cache()  # Clear GPU cache
+            self.blocks[block_idx] = None  # Set the block to None to free up the reference
 
     def process_incremental(self, x, chunk_indices, **kwargs):
         """

@@ -505,29 +505,29 @@ class WanModel(ModelMixin, ConfigMixin):
             WanModel: A partially loaded model ready for incremental processing.
         """
         # Load the model configuration
-    config = cls.load_config(checkpoint_dir)
-
-    # Initialize the model structure without allocating parameters
-    model = cls(**config, lazy_init=True)  # Pass a flag to avoid parameter allocation
-    model.to("cpu")  # Ensure the model is initially on CPU
-    model.eval().requires_grad_(False)
-
-    # Load the state dict keys to identify blocks
-    state_dict_path = os.path.join(checkpoint_dir, "diffusion_pytorch_model.safetensors")
-    with safe_open(state_dict_path, framework="pt") as f:
-        block_keys = [key for key in f.keys() if "blocks." in key]
-
-    # Store the checkpoint directory and device for lazy loading
-    model.checkpoint_dir = checkpoint_dir
-    model.device = device
-    model.block_keys = block_keys
-    model.state_dict_path = state_dict_path
-
-    # Initialize blocks as None (lazy loading)
-    for i in range(len(model.blocks)):
-        model.blocks[i] = None
-
-    return model
+        config = cls.load_config(checkpoint_dir)
+    
+        # Initialize the model structure without allocating parameters
+        model = cls(**config, lazy_init=True)  # Pass a flag to avoid parameter allocation
+        model.to("cpu")  # Ensure the model is initially on CPU
+        model.eval().requires_grad_(False)
+    
+        # Load the state dict keys to identify blocks
+        state_dict_path = os.path.join(checkpoint_dir, "diffusion_pytorch_model.safetensors")
+        with safe_open(state_dict_path, framework="pt") as f:
+            block_keys = [key for key in f.keys() if "blocks." in key]
+    
+        # Store the checkpoint directory and device for lazy loading
+        model.checkpoint_dir = checkpoint_dir
+        model.device = device
+        model.block_keys = block_keys
+        model.state_dict_path = state_dict_path
+    
+        # Initialize blocks as None (lazy loading)
+        for i in range(len(model.blocks)):
+            model.blocks[i] = None
+    
+        return model
 
     def load_block_from_disk(self, block_idx):
         """

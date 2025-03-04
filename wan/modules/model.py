@@ -519,7 +519,6 @@ class WanModel(ModelMixin, ConfigMixin):
     
         # Store the checkpoint directory and device for lazy loading
         model.checkpoint_dir = checkpoint_dir
-        model.device = device
         model.block_keys = block_keys
         model.state_dict_path = state_dict_path
     

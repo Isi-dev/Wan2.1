@@ -563,6 +563,15 @@ class WanModel(ModelMixin, ConfigMixin):
             eps=self.eps
         )
         block.load_state_dict(block_state_dict)
+    
+        # Initialize the block's parameters
+        for m in block.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+    
+        # Move the block to the GPU
         block.to(self.device)
     
         # Store the loaded block
@@ -732,6 +741,42 @@ class WanModel(ModelMixin, ConfigMixin):
             u = u.reshape(c, *[i * j for i, j in zip(v, self.patch_size)])
             out.append(u)
         return out
+
+
+
+
+
+    # def init_weights(self):
+    #     r"""
+    #     Initialize model parameters using Xavier initialization.
+    #     """
+    #     # Basic initialization for non-block modules
+    #     for m in self.modules():
+    #         if isinstance(m, nn.Linear):
+    #             nn.init.xavier_uniform_(m.weight)
+    #             if m.bias is not None:
+    #                 nn.init.zeros_(m.bias)
+    
+    #     # Initialize embeddings
+    #     nn.init.xavier_uniform_(self.patch_embedding.weight.flatten(1))
+    #     for m in self.text_embedding.modules():
+    #         if isinstance(m, nn.Linear):
+    #             nn.init.normal_(m.weight, std=.02)
+    #     for m in self.time_embedding.modules():
+    #         if isinstance(m, nn.Linear):
+    #             nn.init.normal_(m.weight, std=.02)
+    
+    #     # Initialize output layer
+    #     nn.init.zeros_(self.head.head.weight)
+    
+    #     # Initialize blocks (if not lazily initialized)
+    #     for block in self.blocks:
+    #         if block is not None:  # Skip None blocks (lazy initialization)
+    #             for m in block.modules():
+    #                 if isinstance(m, nn.Linear):
+    #                     nn.init.xavier_uniform_(m.weight)
+    #                     if m.bias is not None:
+    #                         nn.init.zeros_(m.bias)
 
     def init_weights(self):
         r"""

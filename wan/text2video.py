@@ -117,7 +117,13 @@ class WanT2V:
         # num_blocks = len(self.model.blocks)
         # chunks = [range(i, min(i + max_blocks_per_chunk, num_blocks)) for i in range(0, num_blocks, max_blocks_per_chunk)]
 
-        block_size = sum(p.element_size() * p.numel() for p in self.model.blocks[0].parameters())
+        # block_size = sum(p.element_size() * p.numel() for p in self.model.blocks[0].parameters())
+        block_size = (
+            (self.model.dim * self.model.dim * 4) +  # Self-attention weights (Q, K, V, O)
+            (self.model.dim * self.model.ffn_dim * 2) +  # FFN weights (two linear layers)
+            (self.model.dim * 4) +  # Layer normalization parameters
+            (self.model.dim * self.model.dim * 2)  # Cross-attention weights (if applicable)
+        ) * 1  # FP8 quantization (1 byte per element)
         print(f"The size of the first block is {block_size}.")
         max_blocks_per_chunk = max(1, memory_limit // block_size)
         num_blocks = len(self.model.blocks)

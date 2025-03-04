@@ -108,8 +108,8 @@ class WanT2V:
         arg_c = {'context': context, 'seq_len': seq_len}
         arg_null = {'context': context_null, 'seq_len': seq_len}
 
-        print("Setting VRAM limit to 15GB...")
-        memory_limit = 15 * 1024 ** 3  # 15GB in bytes
+        print("Setting VRAM limit to 18GB...")
+        memory_limit = 18 * 1024 ** 3  # 15GB in bytes
 
         # Calculate the number of blocks to load at a time
         # block_size = self.model.blocks[0].parameters().__sizeof__()  # Approximate size of one block
@@ -123,7 +123,7 @@ class WanT2V:
             (self.model.dim * self.model.ffn_dim * 2) +  # FFN weights (two linear layers)
             (self.model.dim * 4) +  # Layer normalization parameters
             (self.model.dim * self.model.dim * 2)  # Cross-attention weights (if applicable)
-        ) * 1  # FP8 quantization (1 byte per element)
+        ) * 4  # FP8 quantization (1 byte per element)
         print(f"The size of the first block is {block_size}.")
         max_blocks_per_chunk = max(1, memory_limit // block_size)
         num_blocks = len(self.model.blocks)

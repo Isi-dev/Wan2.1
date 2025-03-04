@@ -1,6 +1,7 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import math
-
+import os
+from safetensors import safe_open
 import torch
 import torch.cuda.amp as amp
 import torch.nn as nn

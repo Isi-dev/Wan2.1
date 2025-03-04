@@ -112,23 +112,28 @@ class WanT2V:
         memory_limit = 20 * 1024 ** 3  # 20GB in bytes
         
         for _, t in enumerate(tqdm(timesteps)):
-            latent_model_input = latents
-            timestep = torch.tensor([t], device=self.device)
+                latent_model_input = latents
+                timestep = [t]
 
-            for block in self.model.blocks:
-                block.to(self.device)  # Load block to GPU
-                
-                with torch.no_grad():
-                    noise_pred_cond = block(latent_model_input, t=timestep, **arg_c)[0]
-                    noise_pred_uncond = block(latent_model_input, t=timestep, **arg_null)[0]
-                    
-                    noise_pred = noise_pred_uncond + guide_scale * (noise_pred_cond - noise_pred_uncond)
-                    latents = sample_scheduler.step(noise_pred.unsqueeze(0), t, latents.unsqueeze(0), return_dict=False, generator=seed_g)[0].squeeze(0)
-                
-                if torch.cuda.memory_allocated() > memory_limit:
-                    block.cpu()  # Offload block only when needed
-                    torch.cuda.empty_cache()
-        
+                timestep = torch.stack(timestep)
+
+                self.model.to(self.device)
+                noise_pred_cond = self.model(
+                    latent_model_input, t=timestep, **arg_c)[0]
+                noise_pred_uncond = self.model(
+                    latent_model_input, t=timestep, **arg_null)[0]
+
+                noise_pred = noise_pred_uncond + guide_scale * (
+                    noise_pred_cond - noise_pred_uncond)
+
+                temp_x0 = sample_scheduler.step(
+                    noise_pred.unsqueeze(0),
+                    t,
+                    latents[0].unsqueeze(0),
+                    return_dict=False,
+                    generator=seed_g)[0]
+                latents = [temp_x0.squeeze(0)]
+
         x0 = latents
         
         del self.model  # Delete model after processing

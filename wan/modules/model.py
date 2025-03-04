@@ -553,7 +553,7 @@ class WanModel(ModelMixin, ConfigMixin):
     
         # Initialize the block and load its state dict
 
-        
+        cross_attn_type = 't2v_cross_attn' if self.model_type == 't2v' else 'i2v_cross_attn'
         block = WanAttentionBlock(
             cross_attn_type,
             dim=self.dim,

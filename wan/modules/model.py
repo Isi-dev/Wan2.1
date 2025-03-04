@@ -479,6 +479,113 @@ class WanModel(ModelMixin, ConfigMixin):
         # initialize weights
         self.init_weights()
 
+
+    # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+    
+    # Including functions for memory optimizations in low VRAM settings
+
+    @classmethod
+    def from_pretrained_lazy(cls, checkpoint_dir, device):
+        """
+        Lazily load the model from disk, block by block, without loading the entire model into memory.
+
+        Args:
+            checkpoint_dir (str): Path to the checkpoint directory.
+            device (torch.device): Device to load the model onto (e.g., "cuda:0").
+
+        Returns:
+            WanModel: A partially loaded model ready for incremental processing.
+        """
+        # Load the model configuration
+        config = cls.load_config(checkpoint_dir)
+        model = cls(**config)
+        model.to("cpu")  # Ensure the model is initially on CPU
+        model.eval().requires_grad_(False)
+
+        # Load the state dict keys to identify blocks
+        state_dict_path = os.path.join(checkpoint_dir, "diffusion_pytorch_model.safetensors")
+        state_dict = torch.load(state_dict_path, map_location="cpu")
+        block_keys = [key for key in state_dict.keys() if "blocks." in key]
+
+        # Store the checkpoint directory and device for lazy loading
+        model.checkpoint_dir = checkpoint_dir
+        model.device = device
+        model.block_keys = block_keys
+        model.state_dict_path = state_dict_path
+
+        return model
+
+    def load_block_from_disk(self, block_idx):
+        """
+        Load a specific block directly from disk to the GPU.
+
+        Args:
+            block_idx (int): Index of the block to load.
+
+        Returns:
+            Module: The loaded block.
+        """
+        block_key_prefix = f"blocks.{block_idx}."
+        block_state_dict = {}
+
+        # Load only the required block's state dict from disk
+        with open(self.state_dict_path, "rb") as f:
+            for key in self.block_keys:
+                if key.startswith(block_key_prefix):
+                    block_state_dict[key[len(block_key_prefix):]] = torch.load(f, map_location="cpu")[key]
+
+        # Load the block and move it to the GPU
+        block = self.blocks[block_idx]
+        block.load_state_dict(block_state_dict)
+        block.to(self.device)
+        return block
+
+    def unload_block_from_gpu(self, block_idx):
+        """
+        Unload a specific block from GPU memory and delete it from CPU memory.
+
+        Args:
+            block_idx (int): Index of the block to unload.
+        """
+        block = self.blocks[block_idx]
+        block.to("cpu")  # Move the block to CPU
+        del block  # Delete the block from CPU memory
+        torch.cuda.empty_cache()  # Clear GPU cache
+        self.blocks[block_idx] = None  # Set the block to None to free up the reference
+
+    def process_incremental(self, x, chunk_indices, **kwargs):
+        """
+        Process the model incrementally using the specified blocks.
+
+        Args:
+            x (Tensor): Input tensor.
+            chunk_indices (list): List of block indices to process.
+            **kwargs: Additional arguments to pass to the blocks.
+
+        Returns:
+            Tuple[Tensor, Tensor]: Tuple of (noise_pred_cond, noise_pred_uncond).
+        """
+        noise_pred_cond = torch.zeros_like(x)
+        noise_pred_uncond = torch.zeros_like(x)
+
+        for idx in chunk_indices:
+            # Load the block to GPU
+            block = self.load_block_from_disk(idx)
+
+            # Process the block
+            noise_pred_cond += block(x, **kwargs)
+            noise_pred_uncond += block(x, **kwargs)
+
+            # Unload the block from GPU
+            self.unload_block_from_gpu(idx)
+
+        return noise_pred_cond, noise_pred_uncond
+
+    # ... End of Memory Optimization Functions
+
+    # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+    
+
     def forward(
         self,
         x,

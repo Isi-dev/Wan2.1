@@ -571,7 +571,7 @@ class WanModel(ModelMixin, ConfigMixin):
                     nn.init.zeros_(m.bias)
     
         # Move the block to the GPU
-        block.to(self.device)
+        block.to(torch.device(f"cuda:{0}"))
     
         # Store the loaded block
         self.blocks[block_idx] = block

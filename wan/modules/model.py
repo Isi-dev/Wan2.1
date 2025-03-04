@@ -552,7 +552,10 @@ class WanModel(ModelMixin, ConfigMixin):
                     block_state_dict[key[len(block_key_prefix):]] = f.get_tensor(key)
     
         # Initialize the block and load its state dict
+
+        
         block = WanAttentionBlock(
+            cross_attn_type,
             dim=self.dim,
             ffn_dim=self.ffn_dim,
             num_heads=self.num_heads,

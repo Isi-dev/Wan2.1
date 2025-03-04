@@ -466,7 +466,7 @@ class WanModel(ModelMixin, ConfigMixin):
             ])
         else:
             # Initialize blocks as None for lazy loading XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-            self.blocks = nn.ModuleList([None for _ in range(config.num_layers)])
+            self.blocks = nn.ModuleList([None for _ in range(num_layers)])
 
         # head
         self.head = Head(dim, out_dim, patch_size, eps)

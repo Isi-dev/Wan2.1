@@ -684,7 +684,16 @@ class WanModel(ModelMixin, ConfigMixin):
             # Unload the block from GPU
             self.unload_block_from_gpu(idx)
     
-        return noise_pred_cond, noise_pred_uncond
+        # return noise_pred_cond, noise_pred_uncond
+        denoised_cond = self.head(noise_pred_cond, e)
+        denoised_uncond = self.head(noise_pred_uncond, e)
+    
+        # Unpatchify the denoised predictions
+        denoised_cond = self.unpatchify(denoised_cond, grid_sizes)
+        denoised_uncond = self.unpatchify(denoised_uncond, grid_sizes)
+    
+        # Convert to float and return
+        return [u.float() for u in denoised_cond], [u.float() for u in denoised_uncond]
 
     # def process_incremental(self, x, chunk_indices, kwargs_cond=None, kwargs_uncond=None):
     #     """

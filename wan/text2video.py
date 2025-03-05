@@ -145,7 +145,7 @@ class WanT2V:
               for chunk_indices in chunks:
                   # Compute noise_pred_cond and noise_pred_uncond incrementally
                   chunk_noise_pred_cond, chunk_noise_pred_uncond = self.model.process_incremental(
-                      latent_model_input, chunk_indices, t=timestep, **arg_c)
+                      latent_model_input, chunk_indices, t=timestep, kwargs_cond=arg_c, kwargs_uncond=arg_null)
       
                   # Accumulate the results
                   noise_pred_cond += chunk_noise_pred_cond

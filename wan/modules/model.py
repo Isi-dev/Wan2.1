@@ -595,33 +595,129 @@ class WanModel(ModelMixin, ConfigMixin):
             torch.cuda.empty_cache()  # Clear GPU cache
             self.blocks[block_idx] = None  # Set the block to None to free up the reference
 
-    def process_incremental(self, x, chunk_indices, **kwargs):
+    def process_incremental(self, x, chunk_indices, t, context_cond, context_uncond, seq_len, clip_fea=None, y=None):
         """
         Process the model incrementally using the specified blocks.
-
+    
         Args:
             x (Tensor): Input tensor.
             chunk_indices (list): List of block indices to process.
-            **kwargs: Additional arguments to pass to the blocks.
-
+            t (Tensor): Diffusion timesteps tensor of shape [B].
+            context_cond (List[Tensor]): Conditional context embeddings.
+            context_uncond (List[Tensor]): Unconditional context embeddings.
+            seq_len (int): Maximum sequence length for positional encoding.
+            clip_fea (Tensor, optional): CLIP image features for image-to-video mode.
+            y (List[Tensor], optional): Conditional video inputs for image-to-video mode.
+    
         Returns:
             Tuple[Tensor, Tensor]: Tuple of (noise_pred_cond, noise_pred_uncond).
         """
+        # Ensure the model is on the correct device
+        device = self.patch_embedding.weight.device
+        if self.freqs.device != device:
+            self.freqs = self.freqs.to(device)
+    
+        # Handle conditional inputs (y)
+        if y is not None:
+            x = [torch.cat([u, v], dim=0) for u, v in zip(x, y)]
+    
+        # Embeddings
+        x = [self.patch_embedding(u.unsqueeze(0)) for u in x]
+        grid_sizes = torch.stack([torch.tensor(u.shape[2:], dtype=torch.long) for u in x])
+        x = [u.flatten(2).transpose(1, 2) for u in x]
+        seq_lens = torch.tensor([u.size(1) for u in x], dtype=torch.long)
+        assert seq_lens.max() <= seq_len
+        x = torch.cat([torch.cat([u, u.new_zeros(1, seq_len - u.size(1), u.size(2))], dim=1) for u in x])
+    
+        # Time embeddings
+        with amp.autocast(dtype=torch.float32):
+            e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).float())
+            e0 = self.time_projection(e).unflatten(1, (6, self.dim))
+            assert e.dtype == torch.float32 and e0.dtype == torch.float32
+    
+        # Context embeddings
+        context_cond = self.text_embedding(
+            torch.stack([torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))]) for u in context_cond])
+        )
+        context_uncond = self.text_embedding(
+            torch.stack([torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))]) for u in context_uncond])
+        )
+    
+        if clip_fea is not None:
+            context_clip = self.img_emb(clip_fea)  # bs x 257 x dim
+            context_cond = torch.concat([context_clip, context_cond], dim=1)
+            context_uncond = torch.concat([context_clip, context_uncond], dim=1)
+    
+        # Prepare kwargs for conditional and unconditional processing
+        kwargs_cond = {
+            'e': e0,
+            'seq_lens': seq_lens,
+            'grid_sizes': grid_sizes,
+            'freqs': self.freqs,
+            'context': context_cond,
+            'context_lens': None,
+        }
+        kwargs_uncond = {
+            'e': e0,
+            'seq_lens': seq_lens,
+            'grid_sizes': grid_sizes,
+            'freqs': self.freqs,
+            'context': context_uncond,
+            'context_lens': None,
+        }
+    
+        # Initialize noise predictions
         noise_pred_cond = torch.zeros_like(x)
         noise_pred_uncond = torch.zeros_like(x)
-
+    
+        # Process each chunk of blocks
         for idx in chunk_indices:
             # Load the block to GPU
             block = self.load_block_from_disk(idx)
-
-            # Process the block
-            noise_pred_cond += block(x, **kwargs)
-            noise_pred_uncond += block(x, **kwargs)
-
+    
+            # Process the block with conditional kwargs
+            noise_pred_cond += block(x, **kwargs_cond)
+    
+            # Process the block with unconditional kwargs
+            noise_pred_uncond += block(x, **kwargs_uncond)
+    
             # Unload the block from GPU
             self.unload_block_from_gpu(idx)
+    
+        return noise_pred_cond, noise_pred_uncond
 
-        return noise_pred_cond, noise_pred_uncond   
+    # def process_incremental(self, x, chunk_indices, kwargs_cond=None, kwargs_uncond=None):
+    #     """
+    #     Process the model incrementally using the specified blocks.
+
+    #     Args:
+    #         x (Tensor): Input tensor.
+    #         chunk_indices (list): List of block indices to process.
+    #         **kwargs: Additional arguments to pass to the blocks.
+
+    #     Returns:
+    #         Tuple[Tensor, Tensor]: Tuple of (noise_pred_cond, noise_pred_uncond).
+    #     """
+
+        
+
+
+        
+    #     noise_pred_cond = torch.zeros_like(x)
+    #     noise_pred_uncond = torch.zeros_like(x)
+
+    #     for idx in chunk_indices:
+    #         # Load the block to GPU
+    #         block = self.load_block_from_disk(idx)
+
+    #         # Process the block
+    #         noise_pred_cond += block(x, **kwargs_cond)
+    #         noise_pred_uncond += block(x, **kwargs_uncond)
+
+    #         # Unload the block from GPU
+    #         self.unload_block_from_gpu(idx)
+
+    #     return noise_pred_cond, noise_pred_uncond   
 
     # ... End of Memory Optimization Functions
 

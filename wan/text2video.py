@@ -169,8 +169,8 @@ class WanT2V:
                 timestep = torch.stack(timestep)
         
                 self.model.to(self.device)
-                noise_pred_cond = torch.zeros_like(latent_model_input)
-                noise_pred_uncond = torch.zeros_like(latent_model_input)
+                noise_pred_cond = torch.zeros_like(latent_model_input[0])
+                noise_pred_uncond = torch.zeros_like(latent_model_input[0])
         
                 # Process each chunk of blocks
                 for chunk_indices in chunks:

@@ -165,10 +165,10 @@ class WanT2V:
           for _, t in enumerate(tqdm(timesteps)):
                 latent_model_input = latents
                 timestep = [t]
-        
+                
                 timestep = torch.stack(timestep)
         
-                # Initialize noise_pred_cond and noise_pred_uncond
+                self.model.to(self.device)
                 noise_pred_cond = torch.zeros_like(latent_model_input)
                 noise_pred_uncond = torch.zeros_like(latent_model_input)
         

@@ -170,8 +170,10 @@ class WanT2V:
         
                 self.model.to(self.device)
 
-                noise_pred_cond, noise_pred_uncond = self.model.process_incremental(
-                    latent_model_input, chunks, t=timestep, context_cond=context, context_uncond=context_null, seq_len=seq_len)
+                noise_pred_cond = self.model.process_incremental(
+                    latent_model_input, chunks, t=timestep, context_cond=context, seq_len=seq_len)[0]
+                noise_pred_uncond = self.model.process_incremental(
+                    latent_model_input, chunks, t=timestep, context_cond=context_null, seq_len=seq_len)[0]
                 # noise_pred_cond = torch.zeros_like(latent_model_input[0])
                 # noise_pred_uncond = torch.zeros_like(latent_model_input[0])
         
@@ -185,8 +187,8 @@ class WanT2V:
                 #     noise_pred_uncond += chunk_noise_pred_uncond[0]
         
                 # Compute the final noise_pred
-                noise_pred = noise_pred_uncond[0] + guide_scale * (
-                    noise_pred_cond[0] - noise_pred_uncond[0])
+                noise_pred = noise_pred_uncond + guide_scale * (
+                    noise_pred_cond - noise_pred_uncond)
         
                 # Compute temp_x0
                 temp_x0 = sample_scheduler.step(

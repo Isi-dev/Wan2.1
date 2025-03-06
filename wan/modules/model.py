@@ -635,7 +635,7 @@ class WanModel(ModelMixin, ConfigMixin):
         if clip_fea is not None:
             context_clip = self.img_emb(clip_fea)  # bs x 257 x dim
             context_cond = torch.concat([context_clip, context_cond], dim=1)
-            context_uncond = torch.concat([context_clip, context_uncond], dim=1)
+
     
         # Prepare kwargs for conditional and unconditional processing
         kwargs_cond = {
@@ -646,16 +646,7 @@ class WanModel(ModelMixin, ConfigMixin):
             'context': context_cond,
             'context_lens': None,
         }
-
-        # # Process each chunk of blocks
-                # for chunk_indices in chunks:
-                #     chunk_noise_pred_cond, chunk_noise_pred_uncond = self.model.process_incremental(
-                #     latent_model_input, chunk_indices, t=timestep, context_cond=context, context_uncond=context_null, seq_len=seq_len)
         
-                #     # Accumulate the results
-                #     noise_pred_cond += chunk_noise_pred_cond[0]
-                #     noise_pred_uncond += chunk_noise_pred_uncond[0]
-        chunkNo = 0
         # Process each chunk of blocks
         for chunk_indices in chunks:
             chunkNo = chunkNo + 1

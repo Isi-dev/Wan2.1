@@ -599,8 +599,8 @@ class WanModel(ModelMixin, ConfigMixin):
             print("Block used and deleted!")
             self.blocks[block_idx] = None  # Set the block to None to free up the reference
 
-    def process_incremental(self, x, chunk_indices, t, context_cond, context_uncond, seq_len, clip_fea=None, y=None):
-        print("Processing a chunk of blocks...")
+    def process_incremental(self, x, chunks, t, context_cond, context_uncond, seq_len, clip_fea=None, y=None):
+        
         """
         Process the model incrementally using the specified blocks.
     
@@ -674,20 +674,32 @@ class WanModel(ModelMixin, ConfigMixin):
         # Initialize noise predictions
         noise_pred_cond = torch.zeros_like(x)
         noise_pred_uncond = torch.zeros_like(x)
-    
+
+        # # Process each chunk of blocks
+                # for chunk_indices in chunks:
+                #     chunk_noise_pred_cond, chunk_noise_pred_uncond = self.model.process_incremental(
+                #     latent_model_input, chunk_indices, t=timestep, context_cond=context, context_uncond=context_null, seq_len=seq_len)
+        
+                #     # Accumulate the results
+                #     noise_pred_cond += chunk_noise_pred_cond[0]
+                #     noise_pred_uncond += chunk_noise_pred_uncond[0]
+        chunkNo = 0
         # Process each chunk of blocks
-        for idx in chunk_indices:
-            # Load the block to GPU
-            block = self.load_block_from_disk(idx)
-    
-            # Process the block with conditional kwargs
-            noise_pred_cond += block(x, **kwargs_cond)
-    
-            # Process the block with unconditional kwargs
-            noise_pred_uncond += block(x, **kwargs_uncond)
-    
-            # Unload the block from GPU
-            self.unload_block_from_gpu(idx)
+        for chunk_indices in chunks:
+            chunkNo = chunkNo + 1
+            print (f"processing chunk {chunkNo}...")
+            for idx in chunk_indices:
+                # Load the block to GPU
+                block = self.load_block_from_disk(idx)
+        
+                # Process the block with conditional kwargs
+                noise_pred_cond  = block(noise_pred_cond, **kwargs_cond)
+        
+                # Process the block with unconditional kwargs
+                noise_pred_uncond = block(noise_pred_uncond, **kwargs_uncond)
+        
+                # Unload the block from GPU
+                self.unload_block_from_gpu(idx)
     
         # return noise_pred_cond, noise_pred_uncond
         denoised_cond = self.head(noise_pred_cond, e)

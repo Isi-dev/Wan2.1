@@ -169,21 +169,24 @@ class WanT2V:
                 timestep = torch.stack(timestep)
         
                 self.model.to(self.device)
-                noise_pred_cond = torch.zeros_like(latent_model_input[0])
-                noise_pred_uncond = torch.zeros_like(latent_model_input[0])
+
+                noise_pred_cond, noise_pred_uncond = self.model.process_incremental(
+                    latent_model_input, chunks, t=timestep, context_cond=context, context_uncond=context_null, seq_len=seq_len)
+                # noise_pred_cond = torch.zeros_like(latent_model_input[0])
+                # noise_pred_uncond = torch.zeros_like(latent_model_input[0])
         
-                # Process each chunk of blocks
-                for chunk_indices in chunks:
-                    chunk_noise_pred_cond, chunk_noise_pred_uncond = self.model.process_incremental(
-                    latent_model_input, chunk_indices, t=timestep, context_cond=context, context_uncond=context_null, seq_len=seq_len)
+                # # Process each chunk of blocks
+                # for chunk_indices in chunks:
+                #     chunk_noise_pred_cond, chunk_noise_pred_uncond = self.model.process_incremental(
+                #     latent_model_input, chunk_indices, t=timestep, context_cond=context, context_uncond=context_null, seq_len=seq_len)
         
-                    # Accumulate the results
-                    noise_pred_cond += chunk_noise_pred_cond[0]
-                    noise_pred_uncond += chunk_noise_pred_uncond[0]
+                #     # Accumulate the results
+                #     noise_pred_cond += chunk_noise_pred_cond[0]
+                #     noise_pred_uncond += chunk_noise_pred_uncond[0]
         
                 # Compute the final noise_pred
-                noise_pred = noise_pred_uncond + guide_scale * (
-                    noise_pred_cond - noise_pred_uncond)
+                noise_pred = noise_pred_uncond[0] + guide_scale * (
+                    noise_pred_cond[0] - noise_pred_uncond[0])
         
                 # Compute temp_x0
                 temp_x0 = sample_scheduler.step(

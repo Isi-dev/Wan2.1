@@ -32,7 +32,7 @@ class WanT2V:
     
         self.num_train_timesteps = config.num_train_timesteps
         self.param_dtype = config.param_dtype
-        self.checkpoint_dir = checkpoint_dir
+       
         shard_fn = partial(shard_model, device_id=device_id)
         
         self.text_encoder = T5EncoderModel(
@@ -49,15 +49,41 @@ class WanT2V:
         self.vae = WanVAE(
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
             device=self.device)
+      
+        logging.info(f"Creating WanModel from {checkpoint_dir}")
+        self.model = WanModel.from_pretrained_lazy(checkpoint_dir, self.device)
+        logging.info(f"WanModel without weights loaded created from {checkpoint_dir}")
+        self.model.eval().requires_grad_(False)
+
+        if use_usp:
+            from xfuser.core.distributed import \
+                get_sequence_parallel_world_size
+
+            from .distributed.xdit_context_parallel import (usp_attn_forward,
+                                                            usp_dit_forward)
+            for block in self.model.blocks:
+                block.self_attn.forward = types.MethodType(
+                    usp_attn_forward, block.self_attn)
+            self.model.forward = types.MethodType(usp_dit_forward, self.model)
+            self.sp_size = get_sequence_parallel_world_size()
+        else:
+            self.sp_size = 1        
         
         self.sample_neg_prompt = config.sample_neg_prompt
 
     def generate(self, input_prompt, size=(1280, 720), frame_num=81, shift=5.0, sample_solver='unipc', sampling_steps=50, guide_scale=5.0, n_prompt="", seed=-1, offload_model=True):
         print("Generation Stage! Model not yet loaded. But let's first use and get rid of the text encoder.")
         F = frame_num
-        target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1, size[1] // self.vae_stride[1], size[0] // self.vae_stride[2])
+        target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
+                        size[1] // self.vae_stride[1],
+                        size[0] // self.vae_stride[2])
+
+        print(f"target_shape is {target_shape}")
         
-        seq_len = math.ceil((target_shape[2] * target_shape[3]) / (self.patch_size[1] * self.patch_size[2]) * target_shape[1])
+        seq_len = math.ceil((target_shape[2] * target_shape[3]) /
+                            (self.patch_size[1] * self.patch_size[2]) *
+                            target_shape[1] / self.sp_size) * self.sp_size
+        print(f"seq_len is {seq_len}")
         
         if n_prompt == "":
             n_prompt = self.sample_neg_prompt
@@ -80,125 +106,127 @@ class WanT2V:
             context_null = [t.to(self.device) for t in context_null]
             print("Deleting text encoder...")
             del self.text_encoder  # Delete text encoder after use
-
-        logging.info(f"Creating WanModel from {self.checkpoint_dir}")
-        self.model = WanModel.from_pretrained_lazy(self.checkpoint_dir, self.device)
-        logging.info(f"WanModel created from {self.checkpoint_dir}")
-        self.model.eval().requires_grad_(False)
-        logging.info("Time to generate!")
         
         
-        noise = torch.zeros(target_shape, dtype=torch.float32, device=self.device)
-
+        noise = [
+            torch.randn(
+                target_shape[0],
+                target_shape[1],
+                target_shape[2],
+                target_shape[3],
+                dtype=torch.float32,
+                device=self.device,
+                generator=seed_g)
+        ]
         print("Moving VAE to CPU...")
         self.vae.model.to("cpu")  # Move VAE to CPU after encoding
+
+        @contextmanager
+        def noop_no_sync():
+            yield
+
+        no_sync = getattr(self.model, 'no_sync', noop_no_sync)
+
+        # evaluation mode
+        with amp.autocast(dtype=self.param_dtype), torch.no_grad(), no_sync():
         
-        if sample_solver == 'unipc':
-            sample_scheduler = FlowUniPCMultistepScheduler(num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False)
-            sample_scheduler.set_timesteps(sampling_steps, device=self.device, shift=shift)
-            timesteps = sample_scheduler.timesteps
-        elif sample_solver == 'dpm++':
-            sample_scheduler = FlowDPMSolverMultistepScheduler(num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False)
-            sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
-            timesteps, _ = retrieve_timesteps(sample_scheduler, device=self.device, sigmas=sampling_sigmas)
-        else:
-            raise NotImplementedError("Unsupported solver.")
+          if sample_solver == 'unipc':
+              sample_scheduler = FlowUniPCMultistepScheduler(num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False)
+              sample_scheduler.set_timesteps(sampling_steps, device=self.device, shift=shift)
+              timesteps = sample_scheduler.timesteps
+          elif sample_solver == 'dpm++':
+              sample_scheduler = FlowDPMSolverMultistepScheduler(num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False)
+              sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
+              timesteps, _ = retrieve_timesteps(sample_scheduler, device=self.device, sigmas=sampling_sigmas)
+          else:
+              raise NotImplementedError("Unsupported solver.")
+          
+          latents = noise
+          arg_c = {'context': context, 'seq_len': seq_len}
+          arg_null = {'context': context_null, 'seq_len': seq_len}
+  
+          print("Setting VRAM limit to 18GB...")
+          memory_limit = 18 * 1024 ** 3  # 15GB in bytes
+  
+          # block_size = sum(p.element_size() * p.numel() for p in self.model.blocks[0].parameters())
+          block_size = (
+              (self.model.dim * self.model.dim * 4) +  # Self-attention weights (Q, K, V, O)
+              (self.model.dim * self.model.ffn_dim * 2) +  # FFN weights (two linear layers)
+              (self.model.dim * 4) +  # Layer normalization parameters
+              (self.model.dim * self.model.dim * 2)  # Cross-attention weights (if applicable)
+          ) * 4  # FP8 quantization (1 byte per element)
+          print(f"The size of the first block is {block_size}.")
+          max_blocks_per_chunk = max(1, memory_limit // block_size)
+          num_blocks = len(self.model.blocks)
+          print(f"The model has {num_blocks} blocks.")
+          chunks = [range(i, min(i + max_blocks_per_chunk, num_blocks)) for i in range(0, num_blocks, max_blocks_per_chunk)]
+          print(f"There are {len(chunks)} chunks of the model to process.")
+  
+          for _, t in enumerate(tqdm(timesteps)):
+                latent_model_input = latents
+                timestep = [t]
         
-        latents = noise
-        arg_c = {'context': context, 'seq_len': seq_len}
-        arg_null = {'context': context_null, 'seq_len': seq_len}
-
-        print("Setting VRAM limit to 18GB...")
-        memory_limit = 18 * 1024 ** 3  # 15GB in bytes
-
-        # Calculate the number of blocks to load at a time
-        # block_size = self.model.blocks[0].parameters().__sizeof__()  # Approximate size of one block
-        # max_blocks_per_chunk = memory_limit // block_size
-        # num_blocks = len(self.model.blocks)
-        # chunks = [range(i, min(i + max_blocks_per_chunk, num_blocks)) for i in range(0, num_blocks, max_blocks_per_chunk)]
-
-        # block_size = sum(p.element_size() * p.numel() for p in self.model.blocks[0].parameters())
-        block_size = (
-            (self.model.dim * self.model.dim * 4) +  # Self-attention weights (Q, K, V, O)
-            (self.model.dim * self.model.ffn_dim * 2) +  # FFN weights (two linear layers)
-            (self.model.dim * 4) +  # Layer normalization parameters
-            (self.model.dim * self.model.dim * 2)  # Cross-attention weights (if applicable)
-        ) * 4  # FP8 quantization (1 byte per element)
-        print(f"The size of the first block is {block_size}.")
-        max_blocks_per_chunk = max(1, memory_limit // block_size)
-        num_blocks = len(self.model.blocks)
-        print(f"The model has {num_blocks} blocks.")
-        chunks = [range(i, min(i + max_blocks_per_chunk, num_blocks)) for i in range(0, num_blocks, max_blocks_per_chunk)]
-        print(f"There are {len(chunks)} chunks of the model to process.")
-
-        for _, t in enumerate(tqdm(timesteps)):
-              latent_model_input = latents
-              timestep = [t]
-      
-              timestep = torch.stack(timestep)
-      
-              # Initialize noise_pred_cond and noise_pred_uncond
-              noise_pred_cond = torch.zeros_like(latent_model_input)
-              noise_pred_uncond = torch.zeros_like(latent_model_input)
-      
-              # Process each chunk of blocks
-              for chunk_indices in chunks:
-                  # Compute noise_pred_cond and noise_pred_uncond incrementally
-                  # chunk_noise_pred_cond, chunk_noise_pred_uncond = self.model.process_incremental(
-                  #     latent_model_input, chunk_indices, t=timestep, kwargs_cond=arg_c, kwargs_uncond=arg_null)
-                  chunk_noise_pred_cond, chunk_noise_pred_uncond = self.model.process_incremental(
-                  latent_model_input, chunk_indices, t=timestep, context_cond=context, context_uncond=context_null, seq_len=seq_len)
-      
-                  # Accumulate the results
-                  noise_pred_cond += chunk_noise_pred_cond
-                  noise_pred_uncond += chunk_noise_pred_uncond
-      
-              # Compute the final noise_pred
-              noise_pred = noise_pred_uncond + guide_scale * (
-                  noise_pred_cond - noise_pred_uncond)
-      
-              # Compute temp_x0
-              temp_x0 = sample_scheduler.step(
-                  noise_pred.unsqueeze(0),
-                  t,
-                  latents[0].unsqueeze(0),
-                  return_dict=False,
-                  generator=seed_g)[0]
-              latents = [temp_x0.squeeze(0)]
-      
-        x0 = latents
+                timestep = torch.stack(timestep)
         
-        # for _, t in enumerate(tqdm(timesteps)):
-        #         latent_model_input = latents
-        #         timestep = [t]
-
-        #         timestep = torch.stack(timestep)
-
-        #         self.model.to(self.device)
-        #         noise_pred_cond = self.model(
-        #             latent_model_input, t=timestep, **arg_c)[0]
-        #         noise_pred_uncond = self.model(
-        #             latent_model_input, t=timestep, **arg_null)[0]
-
-        #         noise_pred = noise_pred_uncond + guide_scale * (
-        #             noise_pred_cond - noise_pred_uncond)
-
-        #         temp_x0 = sample_scheduler.step(
-        #             noise_pred.unsqueeze(0),
-        #             t,
-        #             latents[0].unsqueeze(0),
-        #             return_dict=False,
-        #             generator=seed_g)[0]
-        #         latents = [temp_x0.squeeze(0)]
-
-        # x0 = latents
+                # Initialize noise_pred_cond and noise_pred_uncond
+                noise_pred_cond = torch.zeros_like(latent_model_input)
+                noise_pred_uncond = torch.zeros_like(latent_model_input)
         
-        del self.model  # Delete model after processing
+                # Process each chunk of blocks
+                for chunk_indices in chunks:
+                    chunk_noise_pred_cond, chunk_noise_pred_uncond = self.model.process_incremental(
+                    latent_model_input, chunk_indices, t=timestep, context_cond=context, context_uncond=context_null, seq_len=seq_len)
         
-        self.vae.model.to(self.device)  # Move VAE back to GPU for decoding
+                    # Accumulate the results
+                    noise_pred_cond += chunk_noise_pred_cond
+                    noise_pred_uncond += chunk_noise_pred_uncond
         
-        if self.rank == 0:
-            videos = self.vae.decode(x0)
+                # Compute the final noise_pred
+                noise_pred = noise_pred_uncond + guide_scale * (
+                    noise_pred_cond - noise_pred_uncond)
+        
+                # Compute temp_x0
+                temp_x0 = sample_scheduler.step(
+                    noise_pred.unsqueeze(0),
+                    t,
+                    latents[0].unsqueeze(0),
+                    return_dict=False,
+                    generator=seed_g)[0]
+                latents = [temp_x0.squeeze(0)]
+        
+          x0 = latents
+          
+          # for _, t in enumerate(tqdm(timesteps)):
+          #         latent_model_input = latents
+          #         timestep = [t]
+  
+          #         timestep = torch.stack(timestep)
+  
+          #         self.model.to(self.device)
+          #         noise_pred_cond = self.model(
+          #             latent_model_input, t=timestep, **arg_c)[0]
+          #         noise_pred_uncond = self.model(
+          #             latent_model_input, t=timestep, **arg_null)[0]
+  
+          #         noise_pred = noise_pred_uncond + guide_scale * (
+          #             noise_pred_cond - noise_pred_uncond)
+  
+          #         temp_x0 = sample_scheduler.step(
+          #             noise_pred.unsqueeze(0),
+          #             t,
+          #             latents[0].unsqueeze(0),
+          #             return_dict=False,
+          #             generator=seed_g)[0]
+          #         latents = [temp_x0.squeeze(0)]
+  
+          # x0 = latents
+        
+          del self.model  # Delete model after processing
+          
+          self.vae.model.to(self.device)  # Move VAE back to GPU for decoding
+          
+          if self.rank == 0:
+              videos = self.vae.decode(x0)
         
         del noise, latents
         del sample_scheduler

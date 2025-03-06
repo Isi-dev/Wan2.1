@@ -646,6 +646,8 @@ class WanModel(ModelMixin, ConfigMixin):
             'context': context_cond,
             'context_lens': None,
         }
+
+        chunkNo = 0
         
         # Process each chunk of blocks
         for chunk_indices in chunks:

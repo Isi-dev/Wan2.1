@@ -567,6 +567,8 @@ class WanModel(ModelMixin, ConfigMixin):
             eps=self.eps
         )
         block.load_state_dict(block_state_dict)
+
+        
     
         # Initialize the block's parameters
         for m in block.modules():
@@ -580,7 +582,7 @@ class WanModel(ModelMixin, ConfigMixin):
     
         # Store the loaded block
         self.blocks[block_idx] = block
-
+        block_state_dict = {}
         print("Block loaded!")
     
         return block

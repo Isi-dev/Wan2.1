@@ -529,6 +529,7 @@ class WanModel(ModelMixin, ConfigMixin):
         return model
 
     def load_block_from_disk(self, block_idx):
+        
         """
         Load a specific block directly from disk to the GPU.
     
@@ -578,6 +579,8 @@ class WanModel(ModelMixin, ConfigMixin):
     
         # Store the loaded block
         self.blocks[block_idx] = block
+
+        print("Block loaded!")
     
         return block
 
@@ -593,9 +596,11 @@ class WanModel(ModelMixin, ConfigMixin):
             block.to("cpu")  # Move the block to CPU
             del block  # Delete the block from CPU memory
             torch.cuda.empty_cache()  # Clear GPU cache
+            print("Block used and deleted!")
             self.blocks[block_idx] = None  # Set the block to None to free up the reference
 
     def process_incremental(self, x, chunk_indices, t, context_cond, context_uncond, seq_len, clip_fea=None, y=None):
+        print("Processing a chunk of blocks...")
         """
         Process the model incrementally using the specified blocks.
     

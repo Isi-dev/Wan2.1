@@ -544,6 +544,7 @@ class WanModel(ModelMixin, ConfigMixin):
             return self.blocks[block_idx]
     
         # Load the block's state dict from disk
+        print("Loading block...")
         block_key_prefix = f"blocks.{block_idx}."
         block_state_dict = {}
     
@@ -599,24 +600,8 @@ class WanModel(ModelMixin, ConfigMixin):
             print("Block used and deleted!")
             self.blocks[block_idx] = None  # Set the block to None to free up the reference
 
-    def process_incremental(self, x, chunks, t, context_cond, context_uncond, seq_len, clip_fea=None, y=None):
+    def process_incremental(self, x, chunks, t, context_cond, seq_len, clip_fea=None, y=None):
         
-        """
-        Process the model incrementally using the specified blocks.
-    
-        Args:
-            x (Tensor): Input tensor.
-            chunk_indices (list): List of block indices to process.
-            t (Tensor): Diffusion timesteps tensor of shape [B].
-            context_cond (List[Tensor]): Conditional context embeddings.
-            context_uncond (List[Tensor]): Unconditional context embeddings.
-            seq_len (int): Maximum sequence length for positional encoding.
-            clip_fea (Tensor, optional): CLIP image features for image-to-video mode.
-            y (List[Tensor], optional): Conditional video inputs for image-to-video mode.
-    
-        Returns:
-            Tuple[Tensor, Tensor]: Tuple of (noise_pred_cond, noise_pred_uncond).
-        """
         # Ensure the model is on the correct device
         device = self.patch_embedding.weight.device
         if self.freqs.device != device:
@@ -644,9 +629,6 @@ class WanModel(ModelMixin, ConfigMixin):
         context_cond = self.text_embedding(
             torch.stack([torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))]) for u in context_cond])
         )
-        context_uncond = self.text_embedding(
-            torch.stack([torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))]) for u in context_uncond])
-        )
     
         if clip_fea is not None:
             context_clip = self.img_emb(clip_fea)  # bs x 257 x dim
@@ -662,18 +644,6 @@ class WanModel(ModelMixin, ConfigMixin):
             'context': context_cond,
             'context_lens': None,
         }
-        kwargs_uncond = {
-            'e': e0,
-            'seq_lens': seq_lens,
-            'grid_sizes': grid_sizes,
-            'freqs': self.freqs,
-            'context': context_uncond,
-            'context_lens': None,
-        }
-    
-        # Initialize noise predictions
-        noise_pred_cond = torch.zeros_like(x)
-        noise_pred_uncond = torch.zeros_like(x)
 
         # # Process each chunk of blocks
                 # for chunk_indices in chunks:
@@ -692,25 +662,17 @@ class WanModel(ModelMixin, ConfigMixin):
                 # Load the block to GPU
                 block = self.load_block_from_disk(idx)
         
-                # Process the block with conditional kwargs
-                noise_pred_cond  = block(noise_pred_cond, **kwargs_cond)
-        
-                # Process the block with unconditional kwargs
-                noise_pred_uncond = block(noise_pred_uncond, **kwargs_uncond)
+                x  = block(x, **kwargs_cond)
         
                 # Unload the block from GPU
                 self.unload_block_from_gpu(idx)
     
-        # return noise_pred_cond, noise_pred_uncond
-        denoised_cond = self.head(noise_pred_cond, e)
-        denoised_uncond = self.head(noise_pred_uncond, e)
-    
-        # Unpatchify the denoised predictions
-        denoised_cond = self.unpatchify(denoised_cond, grid_sizes)
-        denoised_uncond = self.unpatchify(denoised_uncond, grid_sizes)
-    
-        # Convert to float and return
-        return [u.float() for u in denoised_cond], [u.float() for u in denoised_uncond]
+        # head
+        x = self.head(x, e)
+
+        # unpatchify
+        x = self.unpatchify(x, grid_sizes)
+        return [u.float() for u in x]
 
     # def process_incremental(self, x, chunk_indices, kwargs_cond=None, kwargs_uncond=None):
     #     """

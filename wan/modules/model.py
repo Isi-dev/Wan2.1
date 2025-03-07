@@ -78,6 +78,7 @@ def rope_params(max_seq_len, dim, theta=10000):
 
 
 @amp.autocast(enabled=False)
+@torch.compiler.disable()
 def rope_apply(x, grid_sizes, freqs):
     n, c = x.size(2), x.size(3) // 2
 
@@ -843,7 +844,7 @@ class WanModel(ModelMixin, ConfigMixin):
             # Calculate available memory
             max_memory = torch.cuda.get_device_properties(0).total_memory  # Total GPU memory
             used_memory = torch.cuda.memory_allocated()  # Currently used memory
-            available_memory = (max_memory - used_memory)*0.5
+            available_memory = (max_memory - used_memory)*0.6
         
             # Calculate the maximum number of blocks that can fit in available memory
             if block_memory > 0:
@@ -878,7 +879,7 @@ class WanModel(ModelMixin, ConfigMixin):
                 # Clear GPU cache if memory usage is high
                 # if torch.cuda.memory_allocated() > 0.8 * max_memory:
                 torch.cuda.empty_cache()
-                gc.collect()
+                # gc.collect()
     
         # head
         x = self.head(x, e)

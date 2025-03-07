@@ -741,7 +741,7 @@ class WanModel(ModelMixin, ConfigMixin):
     
         # Store the loaded block
         self.blocks[block_idx] = block
-        block_state_dict = {}
+        del block_state_dict
         print("Block loaded!")
     
         return block
@@ -757,7 +757,7 @@ class WanModel(ModelMixin, ConfigMixin):
         if block is not None:
             block.to("cpu")  # Move the block to CPU
             del block  # Delete the block from CPU memory
-            torch.cuda.empty_cache()  # Clear GPU cache
+            
             print("Block used and deleted!")
             self.blocks[block_idx] = None  # Set the block to None to free up the reference
 
@@ -806,20 +806,73 @@ class WanModel(ModelMixin, ConfigMixin):
             'context_lens': None,
         }
 
+        # chunkNo = 0
+        
+        # # Process each chunk of blocks
+        # for chunk_indices in chunks:
+        #     chunkNo = chunkNo + 1
+        #     print (f"processing chunk {chunkNo}...")
+        #     for idx in chunk_indices:
+        #         # Load the block to GPU
+        #         block = self.load_block_from_disk(idx)
+        #     for idx in chunk_indices:
+        #         print(f"Shape of x before using block {idx}: {x.shape}")
+        #         x = block(x, **kwargs_cond)
+        #         print(f"Shape of x after block {idx}: {x.shape}")
+        #     for idx in chunk_indices:
+        #         # Unload the block from GPU
+        #         self.unload_block_from_gpu(idx)
+        #     torch.cuda.empty_cache()  # Clear GPU cache
+
+
         chunkNo = 0
         
         # Process each chunk of blocks
         for chunk_indices in chunks:
-            chunkNo = chunkNo + 1
-            print (f"processing chunk {chunkNo}...")
-            for idx in chunk_indices:
-                # Load the block to GPU
-                block = self.load_block_from_disk(idx)
+            chunkNo += 1
+            print(f"Processing chunk {chunkNo}...")
         
-                x  = block(x, **kwargs_cond)
+            # Estimate memory required for one block
+            if chunkNo == 1:  # Estimate memory usage only once
+                sample_block = self.load_block_from_disk(chunk_indices[0])
+                block_memory = estimate_block_memory(sample_block)
+                self.unload_block_from_gpu(chunk_indices[0])
+                print(f"Estimated memory per block: {block_memory / 1024 ** 2:.2f} MB")
         
-                # Unload the block from GPU
-                self.unload_block_from_gpu(idx)
+            # Calculate available memory
+            max_memory = torch.cuda.get_device_properties(0).total_memory  # Total GPU memory
+            used_memory = torch.cuda.memory_allocated()  # Currently used memory
+            available_memory = max_memory - used_memory
+        
+            # Calculate the maximum number of blocks that can fit in available memory
+            max_blocks_per_chunk = max(1, int(available_memory / block_memory))
+            print(f"Available memory: {available_memory / 1024 ** 3:.2f} GB")
+            print(f"Max blocks per chunk: {max_blocks_per_chunk}")
+        
+            # Split the chunk into smaller sub-chunks if necessary
+            sub_chunks = [chunk_indices[i:i + max_blocks_per_chunk] for i in range(0, len(chunk_indices), max_blocks_per_chunk)]
+        
+            # Process each sub-chunk
+            for sub_chunk_indices in sub_chunks:
+                # Load all blocks in the sub-chunk
+                blocks = []
+                for idx in sub_chunk_indices:
+                    block = self.load_block_from_disk(idx)
+                    blocks.append((idx, block))  # Store block and its index
+        
+                # Process all blocks in the sub-chunk
+                for idx, block in blocks:
+                    print(f"Shape of x before using block {idx}: {x.shape}")
+                    x = block(x, **kwargs_cond)
+                    print(f"Shape of x after block {idx}: {x.shape}")
+        
+                # Unload all blocks in the sub-chunk
+                for idx, block in blocks:
+                    self.unload_block_from_gpu(idx)
+        
+                # Clear GPU cache if memory usage is high
+                if torch.cuda.memory_allocated() > 0.8 * max_memory:
+                    torch.cuda.empty_cache()
     
         # head
         x = self.head(x, e)
@@ -827,6 +880,18 @@ class WanModel(ModelMixin, ConfigMixin):
         # unpatchify
         x = self.unpatchify(x, grid_sizes)
         return [u.float() for u in x]  
+
+    def estimate_block_memory(block):
+        """
+        Estimate the memory usage of a block by measuring the memory allocated before and after loading it.
+        """
+        torch.cuda.empty_cache()  # Clear cache to get accurate measurements
+        before_memory = torch.cuda.memory_allocated()
+        block.to("cuda:0")  # Load the block to GPU
+        after_memory = torch.cuda.memory_allocated()
+        block.to("cpu")  # Move the block back to CPU
+        torch.cuda.empty_cache()  # Clear cache again
+        return after_memory - before_memory  # Memory used by the block
 
     # ... End of Memory Optimization Functions
 

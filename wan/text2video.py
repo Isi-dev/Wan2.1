@@ -23,7 +23,7 @@ from .utils.fm_solvers import (FlowDPMSolverMultistepScheduler,
 from .utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
 
 
-class WanT2V:
+class WanT2VEditing:
     def __init__(self, config, checkpoint_dir, device_id=0, rank=0, t5_fsdp=False, dit_fsdp=False, use_usp=False, t5_cpu=False):
         self.device = torch.device(f"cuda:{device_id}")
         self.config = config
@@ -50,9 +50,12 @@ class WanT2V:
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
             device=self.device)
       
+        # logging.info(f"Creating WanModel from {checkpoint_dir}")
+        # self.model = WanModel.from_pretrained_lazy(checkpoint_dir, self.device)
+        # logging.info(f"WanModel without weights loaded created from {checkpoint_dir}")
+        # self.model.eval().requires_grad_(False)
         logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained_lazy(checkpoint_dir, self.device)
-        logging.info(f"WanModel without weights loaded created from {checkpoint_dir}")
+        self.model = WanModel.from_pretrained(checkpoint_dir)
         self.model.eval().requires_grad_(False)
 
         if use_usp:
@@ -245,7 +248,7 @@ class WanT2V:
         return videos[0] if self.rank == 0 else None
 
 
-class WanT2Vprev:
+class WanT2V:
 
     def __init__(
         self,
@@ -407,6 +410,8 @@ class WanT2Vprev:
             context_null = self.text_encoder([n_prompt], torch.device('cpu'))
             context = [t.to(self.device) for t in context]
             context_null = [t.to(self.device) for t in context_null]
+            print("deleting text_encoder")
+            del self.text_encoder
 
         noise = [
             torch.randn(

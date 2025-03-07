@@ -842,7 +842,7 @@ class WanModel(ModelMixin, ConfigMixin):
             # Calculate available memory
             max_memory = torch.cuda.get_device_properties(0).total_memory  # Total GPU memory
             used_memory = torch.cuda.memory_allocated()  # Currently used memory
-            available_memory = max_memory - used_memory
+            available_memory = (max_memory - used_memory)*0.6
         
             # Calculate the maximum number of blocks that can fit in available memory
             if block_memory > 0:
@@ -874,8 +874,8 @@ class WanModel(ModelMixin, ConfigMixin):
                     self.unload_block_from_gpu(idx)
         
                 # Clear GPU cache if memory usage is high
-                if torch.cuda.memory_allocated() > 0.8 * max_memory:
-                    torch.cuda.empty_cache()
+                # if torch.cuda.memory_allocated() > 0.8 * max_memory:
+                torch.cuda.empty_cache()
     
         # head
         x = self.head(x, e)

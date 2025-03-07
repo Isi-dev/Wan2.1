@@ -867,9 +867,11 @@ class WanModel(ModelMixin, ConfigMixin):
         
                 # Process all blocks in the sub-chunk
                 for idx, block in blocks:
-                    print(f"Shape of x before using block {idx}: {x.shape}")
-                    x = block(x, **kwargs_cond)
-                    print(f"Shape of x after block {idx}: {x.shape}")
+                    # print(f"Shape of x before using block {idx}: {x.shape}")
+                    # self.model.eval()
+                    with torch.no_grad():
+                        x = block(x, **kwargs_cond)
+                    # print(f"Shape of x after block {idx}: {x.shape}")
         
                 # Unload all blocks in the sub-chunk
                 for idx, block in blocks:

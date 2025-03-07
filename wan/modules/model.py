@@ -7,6 +7,7 @@ import torch.cuda.amp as amp
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
+import gc
 
 from .attention import flash_attention
 
@@ -842,7 +843,7 @@ class WanModel(ModelMixin, ConfigMixin):
             # Calculate available memory
             max_memory = torch.cuda.get_device_properties(0).total_memory  # Total GPU memory
             used_memory = torch.cuda.memory_allocated()  # Currently used memory
-            available_memory = (max_memory - used_memory)*0.6
+            available_memory = (max_memory - used_memory)*0.5
         
             # Calculate the maximum number of blocks that can fit in available memory
             if block_memory > 0:
@@ -872,10 +873,12 @@ class WanModel(ModelMixin, ConfigMixin):
                 # Unload all blocks in the sub-chunk
                 for idx, block in blocks:
                     self.unload_block_from_gpu(idx)
+                del blocks
         
                 # Clear GPU cache if memory usage is high
                 # if torch.cuda.memory_allocated() > 0.8 * max_memory:
                 torch.cuda.empty_cache()
+                gc.collect()
     
         # head
         x = self.head(x, e)

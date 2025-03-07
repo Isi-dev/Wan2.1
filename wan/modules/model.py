@@ -834,8 +834,8 @@ class WanModel(ModelMixin, ConfigMixin):
         
             # Estimate memory required for one block
             if chunkNo == 1:  # Estimate memory usage only once
-                sample_block = self.load_block_from_disk(chunk_indices[0])
-                block_memory = self.estimate_block_memory(sample_block)
+                
+                block_memory = self.estimate_block_memory(chunk_indices[0])
                 self.unload_block_from_gpu(chunk_indices[0])
                 print(f"Estimated memory per block: {block_memory / 1024 ** 2:.2f} MB")
         
@@ -845,7 +845,10 @@ class WanModel(ModelMixin, ConfigMixin):
             available_memory = max_memory - used_memory
         
             # Calculate the maximum number of blocks that can fit in available memory
-            max_blocks_per_chunk = max(1, int(available_memory / block_memory))
+            if block_memory > 0:
+                max_blocks_per_chunk = max(1, int(available_memory / block_memory))
+            else:
+                max_blocks_per_chunk = 8
             print(f"Available memory: {available_memory / 1024 ** 3:.2f} GB")
             print(f"Max blocks per chunk: {max_blocks_per_chunk}")
         
@@ -881,17 +884,32 @@ class WanModel(ModelMixin, ConfigMixin):
         x = self.unpatchify(x, grid_sizes)
         return [u.float() for u in x]  
 
-    def estimate_block_memory(self, block):
+    def estimate_block_memory(self, indices):
         """
         Estimate the memory usage of a block by measuring the memory allocated before and after loading it.
+    
+        Args:
+            indices (int): Index of the block to estimate memory for.
+    
+        Returns:
+            int: Estimated memory usage in bytes.
         """
-        torch.cuda.empty_cache()  # Clear cache to get accurate measurements
-        before_memory = torch.cuda.memory_allocated()
-        block.to("cuda:0")  # Load the block to GPU
-        after_memory = torch.cuda.memory_allocated()
-        block.to("cpu")  # Move the block back to CPU
-        torch.cuda.empty_cache()  # Clear cache again
-        return after_memory - before_memory  # Memory used by the block
+        try:
+            torch.cuda.empty_cache()  # Clear cache to get accurate measurements
+            before_memory = torch.cuda.memory_allocated()
+            sample_block = self.load_block_from_disk(indices)
+            after_memory = torch.cuda.memory_allocated()
+            self.unload_block_from_gpu(indices)
+            torch.cuda.empty_cache()  # Clear cache again
+            memory_usage = after_memory - before_memory  # Memory used by the block
+    
+            if memory_usage <= 0:
+                raise ValueError("Estimated block memory is zero or negative. This may indicate a measurement error.")
+    
+            return memory_usage
+        except Exception as e:
+            print(f"Error estimating block memory: {e}")
+            return 8 * 1024 ** 2  # Default to 8 MB if estimation fails
 
     # ... End of Memory Optimization Functions
 

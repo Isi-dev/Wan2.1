@@ -835,7 +835,7 @@ class WanModel(ModelMixin, ConfigMixin):
             # Estimate memory required for one block
             if chunkNo == 1:  # Estimate memory usage only once
                 sample_block = self.load_block_from_disk(chunk_indices[0])
-                block_memory = estimate_block_memory(sample_block)
+                block_memory = self.estimate_block_memory(sample_block)
                 self.unload_block_from_gpu(chunk_indices[0])
                 print(f"Estimated memory per block: {block_memory / 1024 ** 2:.2f} MB")
         

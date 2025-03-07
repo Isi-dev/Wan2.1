@@ -881,7 +881,7 @@ class WanModel(ModelMixin, ConfigMixin):
         x = self.unpatchify(x, grid_sizes)
         return [u.float() for u in x]  
 
-    def estimate_block_memory(block):
+    def estimate_block_memory(self, block):
         """
         Estimate the memory usage of a block by measuring the memory allocated before and after loading it.
         """

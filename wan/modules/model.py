@@ -78,7 +78,6 @@ def rope_params(max_seq_len, dim, theta=10000):
 
 
 @amp.autocast(enabled=False)
-@torch.compiler.disable()
 def rope_apply(x, grid_sizes, freqs):
     n, c = x.size(2), x.size(3) // 2
 
